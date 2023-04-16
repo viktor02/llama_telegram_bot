@@ -140,7 +140,9 @@ def main(message):
         text_to_user = output
 
         send_by_chunks(message, text_to_user)
-        historyDb.insert_message(message.chat.id, user_prompt, output)
+
+        if args.remember_history:
+            historyDb.insert_message(message.chat.id, user_prompt, output)
         bot.delete_message(msg.chat.id, msg.message_id)  # delete 'please wait a moment'
     except OSError as e:
         bot.reply_to(message, f"OSError: {e}")
