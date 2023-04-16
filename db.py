@@ -37,7 +37,8 @@ class ChatHistoryDB:
     def get_chat_messages(self, chat_id, limit=5):
         conn = sqlite3.connect(self.db_name)
         cursor = conn.cursor()
-        cursor.execute("SELECT user_prompt, answer FROM messages WHERE chat_id = ? AND deleted = 0 LIMIT ?", (chat_id, limit))
+        cursor.execute("SELECT user_prompt, answer FROM messages WHERE chat_id = ? AND deleted = 0 LIMIT ?",
+                       (chat_id, limit))
         results = cursor.fetchall()
         conn.close()
         return results
