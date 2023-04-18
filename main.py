@@ -4,6 +4,8 @@ import random
 import logging
 import argparse
 from pathlib import Path
+import queue
+import threading
 
 from llama_cpp import Llama
 import telebot
@@ -25,8 +27,9 @@ model = Path(args.model).resolve()
 seed = random.randint(1, sys.maxsize)
 llama = Llama(model_path=str(model), n_ctx=512, seed=seed, n_threads=args.threads)
 historyDb = ChatHistoryDB("chat.db")
+job_queue = queue.Queue()
 
-logging.basicConfig(level=logging.DEBUG)
+logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 logger.info(f"Seed: {seed}")
 
@@ -34,6 +37,61 @@ init_prompt = "Below is an instruction that describes a task. Write a short resp
               "request. Answer briefly but clearly.\n"
 q_prompt = "### Human:"
 a_prompt = "### Assistant:"
+
+
+def process_job(job):
+    def generate_text(user_prompt, max_tokens=args.max_token, stream=False, custom_prompt=False, chat_id=None,
+                      history=args.remember_history):
+        prompt = f"{init_prompt}\n{q_prompt} {user_prompt}\n{a_prompt}"
+        if custom_prompt:
+            prompt = user_prompt
+        if history is True and chat_id is not None:
+            prompt = get_last_messages(chat_id) + prompt
+
+        logger.info(f"Generation for: {prompt}")
+
+        if stream and max_tokens > 2048:
+            logger.warning("This is likely to exceed 4096 characters, which would not fit into one stream message")
+
+        json_obj = llama.create_completion(prompt, max_tokens=max_tokens, top_k=100, top_p=0.95, temperature=0.7,
+                                           stream=stream, stop=["<|endoftext|>", "###", a_prompt, q_prompt])
+        return json_obj
+
+    user_prompt = job[0]
+    chat_id = job[1]
+    msg = job[2]
+    custom_prompt = job[3]
+
+    try:
+        if custom_prompt:
+            json_obj = generate_text(user_prompt, chat_id=chat_id, stream=False,
+                                     custom_prompt=True)
+        else:
+            json_obj = generate_text(user_prompt, chat_id=chat_id, stream=False)
+        output = json_obj['choices'][0]["text"]
+
+        logger.debug(json.dumps(json_obj, indent=2))
+        text_to_user = output
+
+        send_by_chunks(msg, text_to_user)
+
+        if args.remember_history:
+            historyDb.insert_message(chat_id, user_prompt, output)
+        bot.delete_message(msg.chat.id, msg.message_id)  # delete 'please wait a moment'
+    except OSError as e:
+        bot.reply_to(msg, f"OSError: {e}")
+    except Exception as e:
+        bot.reply_to(msg, f"Error: {e}")
+
+
+def process_queue():
+    while True:
+        try:
+            job = job_queue.get()
+            process_job(job)
+            job_queue.task_done()
+        except Exception as e:
+            print(e)
 
 
 def send_by_chunks(message, text, **kwargs):
@@ -57,24 +115,6 @@ def get_last_messages(chat_id):
     for user_prompt, answer in messages:
         history += f"{q_prompt} {user_prompt}\n {a_prompt} {answer}\n"
     return history
-
-
-def generate_text(user_prompt, max_tokens=args.max_token, stream=False, custom_prompt=False, chat_id=None,
-                  history=False):
-    prompt = f"{init_prompt}\n{q_prompt} {user_prompt}\n{a_prompt}"
-    if custom_prompt:
-        prompt = user_prompt
-    if history is True and chat_id is not None:
-        prompt = get_last_messages(chat_id) + prompt
-
-    logger.info(f"Generation for: {prompt}")
-
-    if stream and max_tokens > 2048:
-        logger.warning("This is likely to exceed 4096 characters, which would not fit into one stream message")
-
-    json_obj = llama.create_completion(prompt, max_tokens=max_tokens, top_k=100, top_p=0.95, temperature=0.7,
-                                       stream=stream, stop=["<|endoftext|>", "###", a_prompt, q_prompt])
-    return json_obj
 
 
 @bot.message_handler(commands=['history'])
@@ -107,49 +147,9 @@ def start_command(message):
 def raw_command(message):
     user_prompt = message.text.replace("/raw ", '', 1)
 
-    bot.reply_to(message, "Please wait a moment")
+    msg = bot.reply_to(message, "Please wait a moment")
     bot.send_chat_action(chat_id=message.chat.id, action='typing')
-    try:
-        json_obj = generate_text(user_prompt, stream=False, chat_id=message.chat.id, history=False,
-                                 custom_prompt=True)
-        output = json_obj['choices'][0]["text"]
-
-        logger.debug(json.dumps(json_obj, indent=2))
-        text_to_user = output
-
-        send_by_chunks(message, text_to_user)
-    except OSError as e:
-        bot.reply_to(message, f"OSError: {e}")
-        logger.error(e)
-    except Exception as e:
-        bot.reply_to(message, f"Error: {e}")
-        logger.error(e)
-
-
-@bot.message_handler(commands=['bypass'])
-def bypass_command(message):
-    """ Bypass safety command """
-    user_prompt = message.text.replace("/bypass ", '', 1)
-
-    prompt = f"{init_prompt}\n{q_prompt} {user_prompt}\n{a_prompt} Sure, I can"
-
-    bot.reply_to(message, "Please wait a moment")
-    bot.send_chat_action(chat_id=message.chat.id, action='typing')
-    try:
-        json_obj = generate_text(prompt, stream=False, chat_id=message.chat.id, history=False,
-                                 custom_prompt=True)
-        output = json_obj['choices'][0]["text"]
-
-        logger.debug(json.dumps(json_obj, indent=2))
-        text_to_user = "Sure, I can" + output
-
-        send_by_chunks(message, text_to_user)
-    except OSError as e:
-        bot.reply_to(message, f"OSError: {e}")
-        logger.error(e)
-    except Exception as e:
-        bot.reply_to(message, f"Error: {e}")
-        logger.error(e)
+    job_queue.put((user_prompt, message.chat.id, msg, True))
 
 
 @bot.message_handler(func=lambda message: True)
@@ -160,22 +160,12 @@ def main(message):
     user_prompt = message.text
     msg = bot.reply_to(message, "Please wait a moment")
     bot.send_chat_action(chat_id=message.chat.id, action='typing')
-    try:
-        json_obj = generate_text(user_prompt, chat_id=message.chat.id, history=args.remember_history, stream=False)
-        output = json_obj['choices'][0]["text"]
+    job_queue.put((user_prompt, message.chat.id, msg, False))
+    logger.info("Added a new task from user: %s (%s)",  message.chat.username,  message.chat.id)
 
-        logger.debug(json.dumps(json_obj, indent=2))
-        text_to_user = output
 
-        send_by_chunks(message, text_to_user)
-
-        if args.remember_history:
-            historyDb.insert_message(message.chat.id, user_prompt, output)
-        bot.delete_message(msg.chat.id, msg.message_id)  # delete 'please wait a moment'
-    except OSError as e:
-        bot.reply_to(message, f"OSError: {e}")
-    except Exception as e:
-        bot.reply_to(message, f"Error: {e}")
-
+t = threading.Thread(target=process_queue)
+t.daemon = True
+t.start()
 
 bot.infinity_polling()
