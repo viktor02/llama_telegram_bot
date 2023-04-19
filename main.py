@@ -48,14 +48,13 @@ def process_job(job):
         if history is True and chat_id is not None:
             prompt = get_last_messages(chat_id) + prompt
 
-        logger.info(f"Generation for: {prompt}")
+        logger.debug(f"Generation for: {prompt}")
 
         if stream and max_tokens > 2048:
             logger.warning("This is likely to exceed 4096 characters, which would not fit into one stream message")
 
-        json_obj = llama.create_completion(prompt, max_tokens=max_tokens, top_k=100, top_p=0.95, temperature=0.7,
+        return llama.create_completion(prompt, max_tokens=max_tokens, top_k=100, top_p=0.95, temperature=0.7,
                                            stream=stream, stop=["<|endoftext|>", "###", a_prompt, q_prompt])
-        return json_obj
 
     user_prompt = job[0]
     chat_id = job[1]
@@ -74,6 +73,7 @@ def process_job(job):
         text_to_user = output
 
         send_by_chunks(msg, text_to_user)
+        logger.info(f"Sent to user {msg.chat.username}: {text_to_user}")
 
         if args.remember_history:
             historyDb.insert_message(chat_id, user_prompt, output)
@@ -98,7 +98,7 @@ def send_by_chunks(message, text, **kwargs):
     if len(text) < 5:
         logger.error("Message is empty or too short")
     if len(text) <= 4096:
-        bot.reply_to(message, text, **kwargs)
+        bot.send_message(message.chat.id, text, **kwargs)
     else:
         chunks = []
         while len(text) > 0:
@@ -147,7 +147,7 @@ def start_command(message):
 def raw_command(message):
     user_prompt = message.text.replace("/raw ", '', 1)
 
-    msg = bot.reply_to(message, "Please wait a moment")
+    msg = bot.reply_to(message, f"Please wait a moment. Current queue: {job_queue.qsize()}")
     bot.send_chat_action(chat_id=message.chat.id, action='typing')
     job_queue.put((user_prompt, message.chat.id, msg, True))
 
@@ -158,10 +158,10 @@ def main(message):
         bot.reply_to(message, "Wrong command")
         return
     user_prompt = message.text
-    msg = bot.reply_to(message, "Please wait a moment")
+    msg = bot.reply_to(message, f"Please wait a moment. Current queue: {job_queue.qsize()}")
     bot.send_chat_action(chat_id=message.chat.id, action='typing')
     job_queue.put((user_prompt, message.chat.id, msg, False))
-    logger.info("Added a new task from user: %s (%s)",  message.chat.username,  message.chat.id)
+    logger.info("Added a new task from user: %s (%s), text: %s",  message.chat.username,  message.chat.id, user_prompt)
 
 
 t = threading.Thread(target=process_queue)
