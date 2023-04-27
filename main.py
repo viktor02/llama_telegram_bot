@@ -3,6 +3,7 @@ import sys
 import random
 import logging
 import argparse
+import time
 from pathlib import Path
 import queue
 import threading
@@ -18,34 +19,42 @@ parser.add_argument('token', help='Telegram bot token')
 parser.add_argument('-m', '--model', default="ggml-model-q4_0.bin", help='Path to the LLaMa model')
 parser.add_argument('-t', '--threads', default=4, type=int, help='Number of threads to use')
 parser.add_argument('--max-token', default=128, type=int, help='The maximum number of tokens to generate')
-parser.add_argument('--remember-history', action='store_true', help='Simulate memory in a chatbot')
+parser.add_argument('--enable-history', action='store_true', help='Simulate memory in a chatbot')
+parser.add_argument('--skip-init-prompt', action='store_true', help='Skip the initial prompt (faster startup)')
+parser.add_argument('--debug', action='store_true', help='Enable debug logging')
 
 args = parser.parse_args()
 
 bot = telebot.TeleBot(args.token)
 model = Path(args.model).resolve()
 seed = random.randint(1, sys.maxsize)
-llama = Llama(model_path=str(model), n_ctx=512, seed=seed, n_threads=args.threads)
+llama = Llama(model_path=str(model), n_ctx=512, seed=seed, n_threads=args.threads, verbose=args.debug)
 historyDb = ChatHistoryDB("chat.db")
 job_queue = queue.Queue()
 
-logging.basicConfig(level=logging.INFO)
+log_level = logging.DEBUG if args.debug else logging.INFO
+log_format = '%(asctime)s [%(levelname)s] %(message)s'
+date_format = '%Y-%m-%d %H:%M:%S'
+
+logging.basicConfig(level=log_level, format=log_format, datefmt=date_format)
 logger = logging.getLogger(__name__)
-logger.info(f"Seed: {seed}")
 
 init_prompt = "Below is an instruction that describes a task. Write a short response that appropriately completes the " \
-              "request. Answer briefly but clearly.\n"
-q_prompt = "### Human:"
-a_prompt = "### Assistant:"
+              "request."
+q_prompt = "### Instruction:"
+a_prompt = "### Response:"
 
 
 def process_job(job):
     def generate_text(user_prompt, max_tokens=args.max_token, stream=False, custom_prompt=False, chat_id=None,
-                      history=args.remember_history):
-        prompt = f"{init_prompt}\n{q_prompt} {user_prompt}\n{a_prompt}"
+                      history=args.enable_history):
+        if args.skip_init_prompt:
+            prompt = f"{q_prompt} {user_prompt}\n{a_prompt}"
+        else:
+            prompt = f"{init_prompt}\n{q_prompt} {user_prompt}\n{a_prompt}"
         if custom_prompt:
             prompt = user_prompt
-        if history is True and chat_id is not None:
+        if history and chat_id:
             prompt = get_last_messages(chat_id) + prompt
 
         logger.debug(f"Generation for: {prompt}")
@@ -62,6 +71,10 @@ def process_job(job):
     custom_prompt = job[3]
 
     try:
+        bot.edit_message_text(chat_id=msg.chat.id, text="Started to generate text for you...",
+                              message_id=msg.message_id)
+        logger.info(f"Generating text for user {msg.chat.username}")
+
         if custom_prompt:
             json_obj = generate_text(user_prompt, chat_id=chat_id, stream=False,
                                      custom_prompt=True)
@@ -75,7 +88,7 @@ def process_job(job):
         send_by_chunks(msg, text_to_user)
         logger.info(f"Sent to user {msg.chat.username}: {text_to_user}")
 
-        if args.remember_history:
+        if args.enable_history:
             historyDb.insert_message(chat_id, user_prompt, output)
         bot.delete_message(msg.chat.id, msg.message_id)  # delete 'please wait a moment'
     except OSError as e:
@@ -88,10 +101,14 @@ def process_queue():
     while True:
         try:
             job = job_queue.get()
+            start_time = time.time()
             process_job(job)
+            end_time = time.time()
+            elapsed_time = end_time - start_time
+            logger.info(f"Job processed in {elapsed_time:02f} seconds")
             job_queue.task_done()
         except Exception as e:
-            print(e)
+            logger.error(f"Error: {e}")
 
 
 def send_by_chunks(message, text, **kwargs):

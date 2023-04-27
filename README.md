@@ -30,7 +30,7 @@ options:
                         Number of threads to use
   --max-token MAX_TOKEN
                         The maximum number of tokens to generate
-  --remember-history    Simulate memory in a chatbot
+  --enable-history    Simulate memory in a chatbot
 ```
 
 
