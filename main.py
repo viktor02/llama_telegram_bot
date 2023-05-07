@@ -18,7 +18,7 @@ parser = argparse.ArgumentParser(description='LLaMa telegram bot')
 parser.add_argument('token', help='Telegram bot token')
 parser.add_argument('-m', '--model', default="ggml-model-q4_0.bin", help='Path to the LLaMa model')
 parser.add_argument('-t', '--threads', default=4, type=int, help='Number of threads to use')
-parser.add_argument('--max-token', default=128, type=int, help='The maximum number of tokens to generate')
+parser.add_argument('--max-tokens', default=128, type=int, help='The maximum number of tokens to generate')
 parser.add_argument('--enable-history', action='store_true', help='Simulate memory in a chatbot')
 parser.add_argument('--skip-init-prompt', action='store_true', help='Skip the initial prompt (faster startup)')
 parser.add_argument('--debug', action='store_true', help='Enable debug logging')
@@ -46,7 +46,7 @@ a_prompt = "### Response:"
 
 
 def process_job(job):
-    def generate_text(user_prompt, max_tokens=args.max_token, stream=False, custom_prompt=False, chat_id=None,
+    def generate_text(user_prompt, max_tokens=args.max_tokens, stream=False, custom_prompt=False, chat_id=None,
                       history=args.enable_history):
         if args.skip_init_prompt:
             prompt = f"{q_prompt} {user_prompt}\n{a_prompt}"
