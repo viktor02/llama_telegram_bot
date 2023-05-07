@@ -6,9 +6,16 @@
 
 All models based on LLaMa and converted into the latest GGML format, such as Alpaca, Vicuna, Gpt4All and others.
 
+## Features
+
+* Loading LLaMa models (obviously) and providing a bot interface in Telegram
+* FIFO queue for tasks (several users can send tasks to LLaMa model and get a response as soon as it is generated)
+* Simple history
+
 ## How to set up
 
 1. Place the model weight(ggml format) somewhere
+2. Create a Telegram bot and obtain a bot token.
 2. Install requirements  
 `pip install -r requirements.txt`
 3. Run
@@ -52,6 +59,12 @@ user_prompt = "What is the task you need to complete?"  # This is the prompt tha
 prompt = f"{init_prompt}\n{q_prompt} {user_prompt}\n{a_prompt}"  # Final prompt to be passed on to the model
 ``` 
 
-Although, apparently, the latest models such as WizardLM don't care if you write Instruction or Human, since their dataset contained both parts of the Alpaca and parts of the Vicuna dataset.
+Although apparently, the latest models such as WizardLM don't care if you write Instruction or Human since their dataset contained both parts of the Alpaca and parts of the Vicuna dataset.
 
 Or I could be wrong. Try it yourself.
+
+## FAQ
+
+*Q*: I have this error "error loading model: unrecognized tensor type 4/5"
+
+*A*: Looks like you are using old llama.cpp. Try to update the `llama-cpp-python` package

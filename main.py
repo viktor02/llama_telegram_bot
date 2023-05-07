@@ -25,13 +25,6 @@ parser.add_argument('--debug', action='store_true', help='Enable debug logging')
 
 args = parser.parse_args()
 
-bot = telebot.TeleBot(args.token)
-model = Path(args.model).resolve()
-seed = random.randint(1, sys.maxsize)
-llama = Llama(model_path=str(model), n_ctx=512, seed=seed, n_threads=args.threads, verbose=args.debug)
-historyDb = ChatHistoryDB("chat.db")
-job_queue = queue.Queue()
-
 log_level = logging.DEBUG if args.debug else logging.INFO
 log_format = '%(asctime)s [%(levelname)s] %(message)s'
 date_format = '%Y-%m-%d %H:%M:%S'
@@ -39,8 +32,22 @@ date_format = '%Y-%m-%d %H:%M:%S'
 logging.basicConfig(level=log_level, format=log_format, datefmt=date_format)
 logger = logging.getLogger(__name__)
 
-init_prompt = "Below is an instruction that describes a task. Write a short response that appropriately completes the " \
-              "request."
+
+bot = telebot.TeleBot(args.token)
+model = Path(args.model).resolve()
+seed = random.randint(1, sys.maxsize)
+
+try:
+    llama = Llama(model_path=str(model), n_ctx=512, seed=seed, n_threads=args.threads, verbose=args.debug)
+except ValueError as e:
+    logger.error("Error while initializing LLaMa: "+str(e))
+    sys.exit(1)
+
+historyDb = ChatHistoryDB("chat.db")
+job_queue = queue.Queue()
+
+init_prompt = "Below is an instruction that describes a task. Write a short response that appropriately completes " \
+              "the request."
 q_prompt = "### Instruction:"
 a_prompt = "### Response:"
 
